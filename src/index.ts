@@ -28,7 +28,7 @@ export interface SequenceConstraint<T> {
    * Incremental check used for pruning: may `next` be appended to `prefix`? `prefix` includes any
    * `after` items; `start` is the index of the first new item. Must not mutate `prefix`.
    * Return `true` when unsure. A constraint without `allows` can still be used (the repair and
-   * rejection solvers, a final check in backtracking, and online with a weaker test).
+   * rejection solvers, and a final check in backtracking).
    */
   allows?(prefix: T[], next: T, start: number): boolean;
   /** Number of violations in a complete sequence (0 = satisfied). Required. */
@@ -160,10 +160,17 @@ function valueTest(values?: Values): (v: unknown) => boolean {
   return (v) => values.includes(v);
 }
 
-/** Truthy key, or membership in `values` when given: used by the counting rules. */
-function matcher<T>(key?: Key<T>, values?: Values): (item: T, index: number) => boolean {
+/** Membership of the key value in `values`: used by the counting rules, which require `values`. */
+function matcher<T>(
+  rule: string,
+  key: Key<T> | undefined,
+  values: Values | undefined
+): (item: T, index: number) => boolean {
+  if (values === undefined)
+    throw new TypeError(
+      `${rule}(): \`values\` is required: the key values to count, e.g. { key: isTarget, values: [true] }.`
+    );
   const k = keyFn(key);
-  if (values === undefined) return (item, i) => Boolean(k(item, i));
   const t = valueTest(values);
   return (item, i) => t(k(item, i));
 }
@@ -403,13 +410,14 @@ export function maxGap<T>(opts: GapOptions<T>): SequenceConstraint<T> {
   };
 }
 
-/** The first `count` new items (default 1) match: truthy key, or key value in `values`. */
+/** The first `count` new items (default 1) have a key value in `values`. */
 export function startWith<T>(opts: {
   key?: Key<T>;
-  values?: Values;
+  /** Required: the key values the first items must have. */
+  values: Values;
   count?: number;
 }): SequenceConstraint<T> {
-  const m = matcher(opts.key, opts.values);
+  const m = matcher("startWith", opts.key, opts.values);
   const count = opts.count ?? 1;
   return {
     name: `startWith(${keyName(opts.key)}${valuesName(opts.values)} x${count})`,
@@ -441,7 +449,8 @@ export function startWith<T>(opts: {
 
 export interface CountOptions<T> {
   key?: Key<T>;
-  values?: Values;
+  /** Required: the key values to count. */
+  values: Values;
   min?: number;
   max?: number;
   exactly?: number;
@@ -452,7 +461,7 @@ export interface CountOptions<T> {
 }
 
 function countConstraint<T>(name: string, opts: CountOptions<T>): SequenceConstraint<T> {
-  const m = matcher(opts.key, opts.values);
+  const m = matcher(name.slice(0, name.indexOf("(")), opts.key, opts.values);
   const min = opts.exactly ?? opts.min ?? 0;
   const max = opts.exactly ?? opts.max ?? Infinity;
   // Windows [a, b) in new-item coordinates that contain relative position r.
@@ -528,7 +537,7 @@ function countConstraint<T>(name: string, opts: CountOptions<T>): SequenceConstr
   };
 }
 
-/** Exactly `count` of the new items match (truthy key or key value in `values`); optionally within `range`. */
+/** Exactly `count` of the new items have a key value in `values`; optionally within `range`. */
 export function exactCount<T>(
   opts: Omit<CountOptions<T>, "min" | "max" | "exactly" | "window"> & { count: number }
 ): SequenceConstraint<T> {
@@ -1192,109 +1201,4 @@ export function sequenceBlocks<T>(
     }
   });
   return out;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Online
-// ---------------------------------------------------------------------------------------------
-
-export interface SequencerOptions<T> {
-  /**
-   * `false` (default for an array): `items` is a multiset, each item is used once.
-   * `true`: draw from `items` with replacement. Ignored for a sampler.
-   */
-  replace?: boolean;
-  /** Items presented before the sequencer's first call. */
-  after?: T[];
-  /** If no candidate is allowed: `'throw'` (default) or `'ignore'` (pick any candidate). */
-  on_fail?: "throw" | "ignore";
-  /** Random number source returning values in [0, 1). Default `Math.random` (read at call time). */
-  rng?: () => number;
-}
-
-export interface Sequencer<T> {
-  /**
-   * Choose the next item. `history` is what has actually been presented, with any outcomes the
-   * constraints need already recorded on the items. Default: the items this sequencer has
-   * returned so far (the same objects, so you can annotate them with outcomes).
-   */
-  next(history?: T[]): T;
-  /** Items returned so far. */
-  readonly issued: T[];
-  /** Items not yet used (multiset mode). */
-  readonly remaining: T[];
-}
-
-/**
- * Online counterpart of `sequence()`: `next(history)` picks an item that the constraints allow
- * given what actually happened, looking one step ahead (`allows`, then `feasible` on what
- * remains). A constraint without `allows` is checked by its `violations()` not getting worse.
- */
-export function createSequencer<T>(
-  source: T[] | SequenceSampler<T>,
-  constraints: SequenceConstraint<T>[],
-  options: SequencerOptions<T> = {}
-): Sequencer<T> {
-  const after = options.after ?? [];
-  const issued: T[] = [];
-  const multiset = !isSampler(source) && !options.replace;
-  const remaining: T[] = multiset ? (source as T[]).slice() : [];
-  return {
-    issued,
-    remaining,
-    next(history = issued) {
-      return withRng(options.rng, () => pick(history));
-    },
-  };
-  function pick(history: T[]): T {
-    {
-      const prefix = after.concat(history);
-      const start = after.length;
-      let pool: T[];
-      if (isSampler(source)) pool = Array.from({ length: 20 }, () => source.draw());
-      else pool = shuffled(multiset ? remaining : source);
-      if (multiset && !remaining.length)
-        throw new SequenceError("createSequencer(): no items left.", []);
-      const blame = new Map<string, number>();
-      const seen = new Set<unknown>();
-      const base = constraints.map((c) => (c.allows ? 0 : c.violations(prefix, start)));
-      for (const cand of pool) {
-        if (seen.has(cand)) continue;
-        seen.add(cand);
-        let ok = true;
-        const rest = multiset ? remaining.slice() : [];
-        if (multiset) rest.splice(rest.indexOf(cand), 1);
-        const nextPrefix = prefix.concat([cand]);
-        for (let ci = 0; ci < constraints.length && ok; ci++) {
-          const c = constraints[ci];
-          const good = c.allows
-            ? c.allows(prefix, cand, start) &&
-              (!multiset || !c.feasible || c.feasible(nextPrefix, rest, start))
-            : c.violations(nextPrefix, start) <= base[ci];
-          if (!good) {
-            ok = false;
-            blame.set(c.name, (blame.get(c.name) ?? 0) + 1);
-          }
-        }
-        if (ok) {
-          if (multiset) remaining.splice(remaining.indexOf(cand), 1);
-          issued.push(cand);
-          return cand;
-        }
-      }
-      if (options.on_fail === "ignore") {
-        const cand = pool[0];
-        if (multiset) remaining.splice(remaining.indexOf(cand), 1);
-        issued.push(cand);
-        return cand;
-      }
-      const names = [...blame.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
-      throw new SequenceError(
-        `createSequencer(): no candidate is allowed after ${
-          prefix.length
-        } trials; blocked by ${names.map((n) => `"${n}"`).join(", ")}.`,
-        names
-      );
-    }
-  }
 }

@@ -3,7 +3,7 @@ import seedrandom from "seedrandom";
 import {
   SequenceError,
   checkSequence,
-  createSequencer,
+  exactCount,
   maxGap,
   maxRun,
   minGap,
@@ -17,6 +17,13 @@ const setSeed = (seed: string) => {
 };
 
 describe("sequence basics", () => {
+  it("counting rules require values", () => {
+    expect(() => exactCount<string>({ key: (x) => x === "T", count: 2 } as any)).toThrow(
+      /exactCount\(\): `values` is required/
+    );
+    expect(() => startWith<string>({ count: 2 } as any)).toThrow(/startWith\(\): `values`/);
+  });
+
   it("runs the README example", () => {
     const items = [...Array(170).fill("S"), ...Array(30).fill("T")];
     const isTarget = (x: string) => x === "T";
@@ -43,16 +50,6 @@ describe("sequence basics", () => {
         sequence(items, cs, { solver, rng: seedrandom("z") })
       );
     }
-  });
-
-  it("createSequencer is reproducible with the rng option", () => {
-    const run = () => {
-      const s = createSequencer("aabbccdd".split(""), [noRepeat<string>()], {
-        rng: seedrandom("w"),
-      });
-      return Array.from({ length: 8 }, () => s.next());
-    };
-    expect(run()).toEqual(run());
   });
 
   it("is reproducible under setSeed", () => {
@@ -100,24 +97,5 @@ describe("sequence basics", () => {
       violations: (s: number[], st: number) => (s[st] % 2 === 0 ? 0 : 1),
     };
     expect(sequence([1, 2, 3, 4], [evenFirst])[0] % 2).toBe(0);
-  });
-
-  it("createSequencer draws a multiset; one-step lookahead may corner itself and then says so", () => {
-    const items = "aabbccdd".split("");
-    const cs = [noRepeat<string>(), startWith<string>({ values: ["a"] })];
-    let cornered = 0;
-    for (let s = 0; s < 40; s++) {
-      setSeed("seq" + s);
-      const q = createSequencer(items, cs);
-      try {
-        for (let i = 0; i < items.length; i++) q.next();
-      } catch (e) {
-        expect(e).toBeInstanceOf(SequenceError);
-        cornered++;
-        continue;
-      }
-      expect(checkSequence(q.issued, cs).ok).toBe(true);
-    }
-    console.log("sequencer cornered in", cornered, "of 40 runs");
   });
 });
