@@ -1,0 +1,64 @@
+name: release
+
+on:
+  push:
+    paths:
+      - ".changeset/**"
+      - ".github/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+    branches:
+      - main
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      # Needed for npm trusted publishing (OIDC), which replaces NPM_TOKEN
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@3235b876344d2a9aa001b8d1453c930bba69e610 # v3.9.1
+        with:
+          # Trusted publishing requires Node >= 22.14.0 and npm >= 11.5.1
+          node-version: 22
+          cache: npm
+          # No registry-url: setup-node would write an `_authToken` line to
+          # .npmrc, which breaks OIDC when no token is set
+          # (https://github.com/actions/setup-node/issues/1551).
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check types
+        run: npm run tsc
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm run test -- --ci --maxWorkers=2
+
+      - name: Create Release Pull Request or Publish
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: npm run changeset:version
+          publish: npm run changeset:publish
+          commit: "chore(release): version packages"
+        env:
+          # No NPM_TOKEN: npm publish authenticates through the trusted
+          # publisher configured for the package. Trust can only be added to a
+          # package that exists, so publish once by hand, then run
+          # (npm >= 11.15.0):
+          #   npm trust github @jspsych/sequencer --file release.yml --repo jspsych/sequencer --allow-publish
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
