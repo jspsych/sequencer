@@ -46,8 +46,10 @@ Releases go through changesets: merging to `main` opens a version PR, and mergin
 
 - **Items** are permuted (`sequence(items, ...)`), or drawn with replacement from a sampler (`sequence(sampler(items, 200), ...)`).
 - **Constraints** are plain objects with a `violations(seq, start)` function. Optional `allows`, `feasible` and `positions` hooks let solvers prune or focus repairs. The built-in rules are factories over this interface; your own rules use the same interface.
-- **`key`** picks what a rule compares: omitted (the item itself), a property name, or a function of the item. **`values`** limits the rule to some key values.
+- **`key`** picks what a rule compares: omitted (the item itself), a property name, or a function of the item. **`values`** limits the rule to some key values (an array, or a predicate). The run and gap rules apply to every key value when `values` is omitted. The counting rules (`startWith`, `exactCount`, `countBetween`, `windowCount`) require `values`: `exactCount({ key: isTarget, values: [true], count: 40 })`.
 - **`after`** passes items already presented (an earlier block), so rules hold across the boundary. `sequenceBlocks()` does this for a list of blocks.
+
+Orders are generated before the trials run. Rules that depend on the participant's responses (for example, reversing after 8 correct in a row) are not covered; write those as task logic.
 
 ## Built-in rules
 
@@ -62,7 +64,7 @@ Releases go through changesets: merging to `main` opens a version PR, and mergin
 | `"rejection"`      | reshuffle until valid                                                          | yes, but only practical for loose rules |
 | `"auto"` (default) | backtrack when every rule has `allows`, otherwise repair; falls back to repair | no                                      |
 
-If exact uniformity matters (for example, when transition statistics are themselves a measure), use `"rejection"` or check the realized statistics. See French & Perruchet (2009), _Behavior Research Methods_, 41(4), 1233–1241, on how constrained generation biases frequencies.
+The default, `"auto"`, is fast, but some valid orders come up more often than others (in small tests, up to about 4 times as often). If exact uniformity matters (for example, when transition statistics are themselves a measure), use `"rejection"` or check the realized statistics. See French & Perruchet (2009), _Behavior Research Methods_, 41(4), 1233–1241, on how constrained generation biases frequencies.
 
 ## Reproducibility
 

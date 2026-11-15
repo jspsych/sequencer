@@ -14,7 +14,6 @@ import {
   checkSequence,
   column,
   countBetween,
-  createSequencer,
   exactCount,
   expand,
   forbidPattern,
@@ -145,7 +144,13 @@ describe("hard cases", () => {
     const session = chunks.flat();
     valid(session, cs);
     valid(session, [
-      windowCount<string>({ key: (t) => t === "AX", size: 10, step: 10, exactly: 7 }),
+      windowCount<string>({
+        key: (t) => t === "AX",
+        values: [true],
+        size: 10,
+        step: 10,
+        exactly: 7,
+      }),
     ]);
     chunks.forEach((c) => expect(sorted(c)).toEqual(sorted(unit)));
   });
@@ -185,7 +190,9 @@ describe("hard cases", () => {
 
   it("2-step task: realized common transitions between 0.6 and 0.8 (sampler + whole-sequence rule)", () => {
     const draw = sampler(["common", "rare"], 200, [0.7, 0.3]);
-    const cs = [countBetween<string>({ key: (t) => t === "common", min: 120, max: 160 })];
+    const cs = [
+      countBetween<string>({ key: (t) => t === "common", values: [true], min: 120, max: 160 }),
+    ];
     const out = sequence(draw, cs, { solver: "rejection" }); // exactly the old 'resample until in range'
     valid(out, cs);
     const p = out.filter((t) => t === "common").length / out.length;
@@ -234,48 +241,6 @@ describe("hard cases", () => {
       .map((s) => s.split(",").filter(Boolean).length);
     expect(gos.every((g) => [1, 3, 5].includes(g))).toBe(true);
   });
-
-  it("response-dependent: reverse the rewarded option after 8 correct in a row (createSequencer)", () => {
-    type Trial = { rewarded: "A" | "B"; correct?: boolean };
-    const reversalAfter = (k: number): SequenceConstraint<Trial> => {
-      // The rewarded option must flip exactly when the last k trials were all correct (and no flip since).
-      const due = (prefix: Trial[]) => {
-        if (prefix.length < k) return false;
-        const tail = prefix.slice(-k);
-        return tail.every((t) => t.correct && t.rewarded === tail[0].rewarded);
-      };
-      const bad = (seq: Trial[], i: number) =>
-        i > 0 && (seq[i].rewarded !== seq[i - 1].rewarded) !== due(seq.slice(0, i));
-      return {
-        name: `reversalAfter(${k})`,
-        allows: (prefix, next) =>
-          prefix.length === 0 ||
-          (next.rewarded !== prefix[prefix.length - 1].rewarded) === due(prefix),
-        violations: (seq, start) => seq.slice(start).filter((_, j) => bad(seq, start + j)).length,
-      };
-    };
-    const rule = reversalAfter(8);
-    const seq = createSequencer<Trial>(
-      { n: Infinity, draw: () => ({ rewarded: Math.random() < 0.5 ? "A" : "B" }) },
-      [rule]
-    );
-    let streak = 0;
-    let reversals = 0;
-    for (let t = 0; t < 400; t++) {
-      const trial = seq.next();
-      const flipped = t > 0 && trial.rewarded !== seq.issued[t - 1].rewarded;
-      // direct check: it flips exactly when 8 correct in a row have accumulated since the last flip
-      if (t > 0) expect(flipped).toBe(streak >= 8);
-      if (flipped) {
-        reversals++;
-        streak = 0;
-      }
-      trial.correct = Math.random() < 0.85; // simulated participant
-      streak = trial.correct ? streak + 1 : 0;
-    }
-    expect(reversals).toBeGreaterThan(5);
-    expect(checkSequence(seq.issued, [rule]).ok).toBe(true);
-  });
 });
 
 // =============================================================================================
@@ -315,7 +280,7 @@ describe("observed rules", () => {
     ];
     type Clip = (typeof clips)[0];
     const cs = [
-      startWith<Clip>({ key: "low" }),
+      startWith<Clip>({ key: "low", values: [true] }),
       maxRun<Clip>({ key: "emotion", max: 1 }),
       maxRun<Clip>({ key: "valence", max: 3 }),
     ];
@@ -476,13 +441,17 @@ describe("observed rules", () => {
       ...rep({ cs: "+", us: false }, 8),
       ...rep({ cs: "-", us: false }, 16),
     ];
-    const c2 = [startWith<(typeof trials)[0]>({ key: (t) => t.cs === "+" && t.us })];
+    const c2 = [
+      startWith<(typeof trials)[0]>({ key: (t) => t.cs === "+" && t.us, values: [true] }),
+    ];
     valid(sequence(trials, c2), c2, trials);
   });
 
   it("booster: 5 of the first 7 trials reinforced (count within a range)", () => {
     const trials = [...rep({ us: true }, 20), ...rep({ us: false }, 20)];
-    const cs = [exactCount<{ us: boolean }>({ key: "us", count: 5, range: [0, 7] })];
+    const cs = [
+      exactCount<{ us: boolean }>({ key: "us", values: [true], count: 5, range: [0, 7] }),
+    ];
     const out = sequence(trials, cs);
     valid(out, cs, trials);
     expect(out.slice(0, 7).filter((t) => t.us).length).toBe(5);
@@ -559,7 +528,7 @@ describe("observed rules", () => {
 
   it("random with replacement but exact proportion of a type (e.g. 25% stop, whole session)", () => {
     const draw = sampler(["stop", "go"], 100, [1, 3]);
-    const cs = [exactCount<string>({ key: (x) => x === "stop", count: 25 })];
+    const cs = [exactCount<string>({ key: (x) => x === "stop", values: [true], count: 25 })];
     const out = sequence(draw, cs, { solver: "repair" });
     valid(out, cs);
     expect(out.filter((x) => x === "stop").length).toBe(25);
@@ -606,7 +575,10 @@ describe("infeasible inputs", () => {
 
   it("an exact count the items cannot give", () => {
     const e = msg(() =>
-      sequence(["x", "y", "y", "y"], [exactCount<string>({ key: (v) => v === "x", count: 2 })])
+      sequence(
+        ["x", "y", "y", "y"],
+        [exactCount<string>({ key: (v) => v === "x", values: [true], count: 2 })]
+      )
     );
     console.log("[error 3]", e.message);
     expect(e.constraints[0]).toContain("exactCount");
