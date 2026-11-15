@@ -1,6 +1,6 @@
 {
   "name": "@jspsych/sequencer",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Constrained random orders for experiment trials: run limits, gaps, counts, transition balance and custom rules",
   "type": "module",
   "main": "dist/index.cjs",
